@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="NursePad"/>
+  <meta name="theme-color" content="#E0638A"/>
+  <title>NursePad 🩺</title>
+  <style>
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    body{margin:0;padding:0;background:#FFF5F8}
+    #root{min-height:100vh}
+    input,textarea,select,button{font-family:inherit}
+    ::-webkit-scrollbar{width:4px;height:4px}
+    ::-webkit-scrollbar-thumb{background:#E0638A55;border-radius:99px}
+    @keyframes pulse{from{opacity:.3;transform:scaleX(.4)}to{opacity:1;transform:scaleX(1)}}
+    @keyframes bounce0{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  </style>
+</head>
+<body>
+  <div id="root">
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;background:#FFF5F8">
+      <div style="font-size:60px">🩺</div>
+      <div style="font-size:26px;font-weight:700;color:#E0638A;font-family:Georgia,serif">NursePad</div>
+      <div style="width:48px;height:4px;background:#E0638A;border-radius:99px;animation:pulse 1s ease-in-out infinite alternate"></div>
+    </div>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js" crossorigin="anonymous"></script>
+  <script type="text/babel" data-presets="react,env">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── Storage ───────────────────────────────────────────────────
+const SK = "np_ai_v1";
+const load = () => { try { return JSON.parse(localStorage.getItem(SK)||"{}"); } catch { return {}; } };
+const save = d => { try { localStorage.setItem(SK, JSON.stringify(d)); } catch {} };
+
+// ── Unlock codes ──────────────────────────────────────────────
+// Gumroad license verification
+async function verifyGumroadKey(licenseKey) {
+  try {
+    const res = await fetch("https://api.gumroad.com/v2/licenses/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `product_id=iH3OVGaYo6ZmsiXFkruJsg==&license_key=${encodeURIComponent(licenseKey)}`
+    });
+    const data = await res.json();
+    return data.success === true;
+  } catch {
+    // If verification fails due to network, do basic format check
+    // Gumroad keys are typically 35 chars: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX
+    const clean = licenseKey.trim().toUpperCase();
+    return clean.length >= 10;
+  }
+}
+
+// ── Themes ────────────────────────────────────────────────────
+const THEMES = [
+  { id:"pink",    name:"Bubble Gum 🩷", p:"#E0638A", dk:"#B8476C", lt:"#FADADF", bg:"#FFF5F8", card:"#FFFFFF", ink:"#2A1520", soft:"#B06080", bd:"#F5C0CF", am:"#F0A500", aml:"#FEF0CC" },
+  { id:"purple",  name:"Purple 💜",     p:"#9B59B6", dk:"#7D3C98", lt:"#EDD6F5", bg:"#FBF5FF", card:"#FFFFFF", ink:"#1A0F2A", soft:"#7040A0", bd:"#E0C0F0", am:"#E91E8C", aml:"#FCE4F3" },
+  { id:"hotpink", name:"Hot Pink 🌸",   p:"#D81B60", dk:"#AD1457", lt:"#FCCDE5", bg:"#FFF0F5", card:"#FFFFFF", ink:"#2A0A15", soft:"#A01050", bd:"#F5B0CC", am:"#FF6D00", aml:"#FFE0B2" },
+  { id:"cotton",  name:"Cotton Candy 🍭",p:"#CE93D8", dk:"#AB47BC", lt:"#F3E5F5", bg:"#FEF6FF", card:"#FFFFFF", ink:"#1A0A20", soft:"#9060A0", bd:"#E8C8F0", am:"#80DEEA", aml:"#E0F7FA" },
+  { id:"rosegold",name:"Rose Gold ✨",  p:"#C2846A", dk:"#9E5E48", lt:"#F5DDD4", bg:"#FFF8F5", card:"#FFFFFF", ink:"#2A1510", soft:"#906050", bd:"#EDD0C0", am:"#B8860B", aml:"#F5EAC8" },
+  { id:"midnight",name:"Midnight 🌙",   p:"#CE93D8", dk:"#9C27B0", lt:"#2D1B36", bg:"#1A0F2E", card:"#2A1A38", ink:"#F0E6FF", soft:"#AA88CC", bd:"#3D2455", am:"#F48FB1", aml:"#3A1F2A" },
+  { id:"ocean",   name:"Ocean 🌊",      p:"#2E6B8A", dk:"#1A4A63", lt:"#C8E0ED", bg:"#F0F5FA", card:"#FFFFFF", ink:"#0A1A2A", soft:"#4A7090", bd:"#B0D0E8", am:"#E07B39", aml:"#FAE4D0" },
+  { id:"sage",    name:"Sage 🌿",       p:"#5C7A6B", dk:"#3D5249", lt:"#D4E4DC", bg:"#F7F4EF", card:"#FFFFFF", ink:"#2A2520", soft:"#7A7068", bd:"#DDD5CA", am:"#C97D3A", aml:"#F5E4CE" },
+];
+
+let T = {...THEMES[0]};
+const applyTheme = id => { Object.assign(T, THEMES.find(t=>t.id===id)||THEMES[0]); };
+
+// ── Helpers ───────────────────────────────────────────────────
+const pad = n => String(n).padStart(2,"0");
+const TODAY = new Date();
+const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const MONTHS_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const dateKey = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const gc = p => (p===null||p===undefined||isNaN(p)) ? T.soft : p>=90?"#4CAF50":p>=77?T.am:"#E53935";
+const gl = p => p===null?"—":p>=90?"A":p>=80?"B":p>=77?"C+":p>=70?"C":p>=60?"D":"F";
+const PRI_C = { high:{bg:"#FDDEDE",t:"#C62828"}, medium:{bg:"#FFF3CD",t:"#E65100"}, low:{bg:"#E8F5E9",t:"#2E7D32"} };
+
+// ── UI Atoms ──────────────────────────────────────────────────
+const IS = () => ({ width:"100%", border:`1.5px solid ${T.bd}`, borderRadius:12, padding:"12px 14px", fontSize:15, fontFamily:"inherit", background:T.bg, color:T.ink, boxSizing:"border-box", outline:"none" });
+function F({ label, children }) {
+  return <div style={{marginBottom:18}}><div style={{fontSize:11,fontWeight:800,color:T.soft,marginBottom:5,textTransform:"uppercase",letterSpacing:"0.08em"}}>{label}</div>{children}</div>;
+}
+function Inp(p) { return <input style={IS()} {...p}/>; }
+function TA(p)  { return <textarea style={{...IS(),resize:"vertical",minHeight:80}} {...p}/>; }
+
+function BigBtn({ children, onClick, full, outline, color, disabled }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      background: disabled ? T.bd : outline ? "transparent" : color||`linear-gradient(135deg,${T.p},${T.dk})`,
+      color: disabled ? T.soft : outline ? T.p : "#fff",
+      border: outline ? `2px solid ${T.p}` : "none",
+      borderRadius:14, padding:"14px 24px", fontSize:15, fontWeight:800,
+      fontFamily:"inherit", cursor:disabled?"not-allowed":"pointer",
+      width:full?"100%":"auto", opacity:disabled?.7:1,
+      boxShadow:disabled||outline?"none":`0 6px 20px ${T.p}44`,
+      display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"opacity .2s",
+    }}>{children}</button>
+  );
+}
+function SmBtn({ children, onClick, danger, soft, active }) {
+  return (
+    <button onClick={onClick} style={{
+      background: danger?"#FDDEDE":active?T.p:soft?T.lt:"transparent",
+      color: danger?"#C62828":active?"#fff":soft?T.dk:T.soft,
+      border:"none", borderRadius:10, padding:"7px 14px", fontSize:13,
+      fontWeight:700, fontFamily:"inherit", cursor:"pointer",
+      display:"inline-flex", alignItems:"center", gap:5,
+    }}>{children}</button>
+  );
+}
+function Pill({ label, color, textColor }) {
+  return <span style={{background:color||T.lt,color:textColor||T.dk,borderRadius:99,padding:"3px 11px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{label}</span>;
+}
+function Sheet({ title, onClose, children, tall }) {
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:100,display:"flex",alignItems:"flex-end",justifyContent:"center"}}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:T.card,borderRadius:"20px 20px 0 0",width:"100%",maxWidth:700,maxHeight:tall?"95vh":"80vh",overflowY:"auto",paddingBottom:32}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px 12px",borderBottom:`1px solid ${T.bd}`,position:"sticky",top:0,background:T.card,zIndex:1}}>
+          <span style={{fontSize:17,fontWeight:800,color:T.ink,fontFamily:"Georgia,serif"}}>{title}</span>
+          <button onClick={onClose} style={{background:T.lt,border:"none",borderRadius:99,width:28,height:28,cursor:"pointer",fontSize:15,color:T.dk,fontWeight:700}}>×</button>
+        </div>
+        <div style={{padding:"18px 20px"}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function GradeRing({ pct, size=52 }) {
+  const r=(size/2)-5, circ=2*Math.PI*r, fill=pct!==null&&!isNaN(pct)?Math.min(pct/100,1)*circ:0;
+  return (
+    <svg width={size} height={size} style={{flexShrink:0}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={T.bd} strokeWidth={5}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={gc(pct)} strokeWidth={5}
+        strokeDasharray={`${fill} ${circ}`} strokeLinecap="round" transform={`rotate(-90 ${size/2} ${size/2})`}/>
+      <text x={size/2} y={size/2+1} textAnchor="middle" dominantBaseline="middle" fontSize={12} fontWeight={800} fill={gc(pct)} fontFamily="inherit">{pct!==null&&!isNaN(pct)?gl(pct):"—"}</text>
+      {pct!==null&&!isNaN(pct)&&<text x={size/2} y={size/2+13} textAnchor="middle" dominantBaseline="middle" fontSize={8} fill={gc(pct)} fontFamily="inherit">{pct.toFixed(0)}%</text>}
+    </svg>
+  );
+}
+
+// ── AI HELPERS ────────────────────────────────────────────────
+async function callAI(messages, systemPrompt) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{"Content-Type":"application/json", "x-api-key": API_KEY, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({
+      model:"claude-sonnet-4-6",
+      max_tokens:1000,
+      system: systemPrompt,
+      messages,
+    })
+  });
+  const data = await res.json();
+  return data.content?.[0]?.text || "";
+}
+
+const API_KEY = "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"; // ← paste your Anthropic API key here
+
+async function parseSyllabus(base64Image, mimeType) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{"Content-Type":"application/json", "x-api-key": API_KEY, "anthropic-version":"2023-06-01", "anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({
+      model:"claude-sonnet-4-6",
+      max_tokens:1000,
+      messages:[{
+        role:"user",
+        content:[
+          { type:"image", source:{ type:"base64", media_type:mimeType, data:base64Image } },
+          { type:"text", text:`You are reading a nursing school syllabus or grading policy. Extract the grading structure and respond ONLY with a valid JSON object, no markdown, no explanation. Use this exact structure:
+{
+  "school": "school name or empty string",
+  "program": "program type like LPN, RN, CNA etc",
+  "passingGrade": 77,
+  "courses": [
+    {
+      "name": "course name",
+      "hours": 300,
+      "categories": [
+        { "name": "Unit Exams", "weight": 60, "pillar": "knowledge" },
+        { "name": "Final Exam", "weight": 30, "pillar": "knowledge" },
+        { "name": "Homework", "weight": 10, "pillar": "knowledge" },
+        { "name": "Skills/Clinical", "weight": 100, "pillar": "skills" },
+        { "name": "Professional Skills", "weight": 100, "pillar": "prof" }
+      ]
+    }
+  ],
+  "welcomeMessage": "2-3 sentence friendly explanation of how their specific grading works, written to the student"
+}
+If you cannot determine specific values, use sensible nursing school defaults. Always include at least one course.` }
+        ]
+      }]
+    })
+  });
+  const data = await res.json();
+  const text = data.content?.[0]?.text || "{}";
+  try {
+    const clean = text.replace(/```json|```/g,"").trim();
+    return JSON.parse(clean);
+  } catch { return null; }
+}
+
+// ── UNLOCK ────────────────────────────────────────────────────
+function Unlock({ onUnlock }) {
+  const [code,setCode]=useState(""); const [err,setErr]=useState(false);
+  const [checking, setChecking] = useState(false);
+  async function tryIt() {
+    const trimmed = code.trim();
+    if(!trimmed) return;
+    setChecking(true);
+    const valid = await verifyGumroadKey(trimmed);
+    setChecking(false);
+    if(valid) onUnlock(trimmed);
+    else { setErr(true); setTimeout(()=>setErr(false),2000); }
+  }
+  return (
+    <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${T.bg},${T.lt})`,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{width:"100%",maxWidth:380,textAlign:"center"}}>
+        <div style={{fontSize:72,marginBottom:10}}>🩺</div>
+        <div style={{fontFamily:"Georgia,serif",fontSize:30,fontWeight:700,color:T.p,marginBottom:4}}>NursePad</div>
+        <div style={{fontSize:14,color:T.soft,marginBottom:32}}>The nursing student app that actually gets it 💕</div>
+        <div style={{background:T.card,borderRadius:20,padding:28,boxShadow:`0 12px 40px ${T.p}22`}}>
+          <div style={{fontSize:14,color:T.ink,marginBottom:14,fontWeight:600}}>Enter your unlock code</div>
+          <input value={code} onChange={e=>{setCode(e.target.value);setErr(false);}} onKeyDown={e=>e.key==="Enter"&&tryIt()}
+            placeholder="Your Gumroad license key" style={{...IS(),textAlign:"center",fontSize:20,fontWeight:800,letterSpacing:"0.05em",marginBottom:12,border:`2px solid ${err?"#E53935":T.bd}`}}/>
+          {err&&<div style={{color:"#E53935",fontSize:13,marginBottom:12,fontWeight:600}}>❌ Invalid code — check your purchase email</div>}
+          <BigBtn onClick={tryIt} full disabled={checking}>
+            {checking ? "Verifying..." : "Unlock My App ✨"}
+          </BigBtn>
+          <div style={{fontSize:12,color:T.soft,marginTop:16}}>No code? <a href="https://gumroad.com" target="_blank" style={{color:T.p,fontWeight:700}}>Get NursePad →</a></div>
+        </div>
+        <div style={{fontSize:11,color:T.soft,marginTop:20}}>One-time purchase · Works on any device · Your data stays private</div>
+      </div>
+    </div>
+  );
+}
+
+// ── AI SETUP ──────────────────────────────────────────────────
+function AISetup({ onDone }) {
+  const [step,setStep] = useState("info"); // info | upload | scanning | result | manual
+  const [name,setName] = useState("");
+  const [emoji,setEmoji] = useState("🩺");
+  const [themeId,setThemeId] = useState("pink");
+  const [scanning,setScanning] = useState(false);
+  const [result,setResult] = useState(null);
+  const [error,setError] = useState("");
+  const [manualSchool,setManualSchool] = useState("");
+  const [manualProg,setManualProg] = useState("LPN");
+  const [manualPass,setManualPass] = useState("77");
+  const [manualCourse,setManualCourse] = useState("");
+  const fileRef = useRef();
+  const galleryRef = useRef();
+
+  applyTheme(themeId);
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStep("scanning");
+    setScanning(true);
+    setError("");
+    try {
+      const base64 = await new Promise((res,rej)=>{
+        const r=new FileReader();
+        r.onload=()=>res(r.result.split(",")[1]);
+        r.onerror=()=>rej(new Error("Read failed"));
+        r.readAsDataURL(file);
+      });
+      const parsed = await parseSyllabus(base64, file.type||"image/jpeg");
+      if (parsed) { setResult(parsed); setStep("result"); }
+      else { setError("Couldn't read the syllabus. Try a clearer photo or enter manually."); setStep("upload"); }
+    } catch(err) {
+      setError("Something went wrong. Try again or enter manually."); setStep("upload");
+    }
+    setScanning(false);
+  }
+
+  function finish(cfg) {
+    onDone({ name, emoji, themeId, ...cfg });
+  }
+
+  function finishManual() {
+    finish({
+      school: manualSchool,
+      program: manualProg,
+      passingGrade: Number(manualPass)||77,
+      courses:[{ id:"c1", name:manualCourse||`${manualProg} Foundations`, hours:300,
+        categories:[
+          {id:"k1",name:"Unit Exams",weight:60,pillar:"knowledge"},
+          {id:"k2",name:"Final Exam",weight:30,pillar:"knowledge"},
+          {id:"k3",name:"Homework/Quizzes",weight:10,pillar:"knowledge"},
+          {id:"s1",name:"Skills/Clinical",weight:100,pillar:"skills"},
+          {id:"p1",name:"Professional Skills",weight:100,pillar:"prof"},
+        ]
+      }],
+      welcomeMessage: `Welcome! Your grade is split into Knowledge, Skills, and Professional Skills — you need ${manualPass||77}%+ in all three to stay in your program. NursePad will calculate your real grade automatically as you enter scores.`
+    });
+  }
+
+  function finishFromResult() {
+    const courses=(result.courses||[]).map((c,i)=>({
+      ...c, id:`c${i+1}`,
+      categories:(c.categories||[]).map((cat,j)=>({...cat, id:`cat${i}${j}`}))
+    }));
+    finish({
+      school:result.school||"",
+      program:result.program||"Nursing",
+      passingGrade:result.passingGrade||77,
+      courses,
+      welcomeMessage:result.welcomeMessage||""
+    });
+  }
+
+  return (
+    <div style={{minHeight:"100vh",background:T.bg,padding:"24px 16px 48px"}}>
+      <div style={{maxWidth:460,margin:"0 auto"}}>
+
+        {/* Step: Name & Theme */}
+        {step==="info"&&(
+          <>
+            <div style={{textAlign:"center",marginBottom:28}}>
+              <div style={{fontSize:52,marginBottom:8}}>{emoji}</div>
+              <div style={{fontFamily:"Georgia,serif",fontSize:26,fontWeight:700,color:T.p}}>Welcome to NursePad!</div>
+              <div style={{fontSize:14,color:T.soft,marginTop:4}}>Let's make it yours 💕</div>
+            </div>
+            <div style={{background:T.card,borderRadius:20,padding:24,border:`1px solid ${T.bd}`,marginBottom:16}}>
+              <F label="Your first name">
+                <Inp value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Jasmine" autoFocus/>
+              </F>
+              <F label="Pick your icon">
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {["🩺","💉","💊","🫀","🌸","⭐","🔥","💪","🦋","👩‍⚕️","🌺","💅"].map(em=>(
+                    <button key={em} onClick={()=>setEmoji(em)} style={{fontSize:22,background:emoji===em?T.lt:"transparent",border:emoji===em?`2px solid ${T.p}`:"2px solid transparent",borderRadius:10,padding:"6px 9px",cursor:"pointer"}}>{em}</button>
+                  ))}
+                </div>
+              </F>
+            </div>
+            <div style={{background:T.card,borderRadius:20,padding:24,border:`1px solid ${T.bd}`,marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:800,color:T.ink,marginBottom:12}}>🎨 Pick your theme</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {THEMES.map(t=>(
+                  <div key={t.id} onClick={()=>{setThemeId(t.id);applyTheme(t.id);}} style={{borderRadius:12,overflow:"hidden",border:themeId===t.id?`3px solid ${t.p}`:`1.5px solid ${t.bd}`,cursor:"pointer"}}>
+                    <div style={{height:22,background:`linear-gradient(90deg,${t.p},${t.am})`}}/>
+                    <div style={{padding:"6px 10px",background:t.bg}}>
+                      <div style={{fontSize:12,fontWeight:700,color:t.ink}}>{t.name}</div>
+                      {themeId===t.id&&<div style={{fontSize:10,color:t.p,fontWeight:700}}>✓ Selected</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <BigBtn full onClick={()=>name.trim()&&setStep("upload")} disabled={!name.trim()}>
+              Continue →
+            </BigBtn>
+          </>
+        )}
+
+        {/* Step: Upload syllabus */}
+        {step==="upload"&&(
+          <>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:48,marginBottom:8}}>📄</div>
+              <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.p}}>Scan Your Grading Info</div>
+              <div style={{fontSize:14,color:T.soft,marginTop:4,lineHeight:1.6}}>Upload your syllabus, Master Plan of Instruction, or any document that shows how your grades are calculated — our AI will read it and set everything up for you!</div>
+            </div>
+            {error&&<div style={{background:"#FDDEDE",borderRadius:12,padding:"12px 16px",marginBottom:16,color:"#C62828",fontSize:13,fontWeight:600}}>⚠️ {error}</div>}
+
+            {/* Hidden inputs — one for camera, one for file */}
+            <input ref={fileRef} type="file" accept="image/*,application/pdf,.doc,.docx" capture="environment" style={{display:"none"}} onChange={handleFile}/>
+            <input ref={galleryRef} type="file" accept="image/*,application/pdf,.doc,.docx" style={{display:"none"}} onChange={handleFile}/>
+
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+              <button onClick={()=>fileRef.current?.click()} style={{background:T.card,border:`2px dashed ${T.p}`,borderRadius:18,padding:"22px",textAlign:"center",cursor:"pointer",width:"100%"}}>
+                <div style={{fontSize:36,marginBottom:6}}>📸</div>
+                <div style={{fontWeight:800,fontSize:15,color:T.ink,marginBottom:2}}>Take a Photo</div>
+                <div style={{fontSize:12,color:T.soft}}>Point your camera at the grading section</div>
+              </button>
+              <button onClick={()=>galleryRef.current?.click()} style={{background:T.card,border:`2px dashed ${T.bd}`,borderRadius:18,padding:"22px",textAlign:"center",cursor:"pointer",width:"100%"}}>
+                <div style={{fontSize:36,marginBottom:6}}>🖼️</div>
+                <div style={{fontWeight:800,fontSize:15,color:T.ink,marginBottom:2}}>Upload from Camera Roll or Files</div>
+                <div style={{fontSize:12,color:T.soft}}>Photo, PDF, or document from your phone</div>
+              </button>
+            </div>
+
+            <div style={{background:T.lt,borderRadius:14,padding:"12px 16px",marginBottom:20,fontSize:13,color:T.dk}}>
+              💡 <strong>What to upload:</strong> The page that shows your grade breakdown — percentages, exam weights, passing grade, etc. This is usually in your syllabus or Master Plan of Instruction (MPI). Don't have one? No worries — you can enter it manually below.
+            </div>
+            <div style={{textAlign:"center"}}>
+              <button onClick={()=>setStep("manual")} style={{background:"none",border:"none",color:T.soft,fontSize:13,cursor:"pointer",textDecoration:"underline"}}>Enter grading info manually instead</button>
+            </div>
+          </>
+        )}
+
+        {/* Step: Scanning */}
+        {step==="scanning"&&(
+          <div style={{textAlign:"center",padding:"60px 0"}}>
+            <div style={{fontSize:56,marginBottom:16}}>🤖</div>
+            <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.p,marginBottom:8}}>Reading your syllabus...</div>
+            <div style={{fontSize:14,color:T.soft,marginBottom:24}}>Our AI is extracting your grading structure</div>
+            <div style={{display:"flex",justifyContent:"center",gap:6}}>
+              {[0,1,2].map(i=>(
+                <div key={i} style={{width:10,height:10,borderRadius:"50%",background:T.p,animation:`bounce${i} .8s ease-in-out infinite`,animationDelay:`${i*.15}s`}}/>
+              ))}
+            </div>
+            <style>{`
+              @keyframes bounce0,@keyframes bounce1,@keyframes bounce2{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+              div[style*="bounce0"]{animation:bounce0 .8s ease-in-out infinite}
+              div[style*="bounce1"]{animation:bounce0 .8s ease-in-out infinite;animation-delay:.15s}
+              div[style*="bounce2"]{animation:bounce0 .8s ease-in-out infinite;animation-delay:.3s}
+            `}</style>
+          </div>
+        )}
+
+        {/* Step: Result */}
+        {step==="result"&&result&&(
+          <>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:48,marginBottom:8}}>✅</div>
+              <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.p}}>Got it!</div>
+              <div style={{fontSize:14,color:T.soft,marginTop:4}}>Here's what I found in your syllabus</div>
+            </div>
+
+            {result.welcomeMessage&&(
+              <div style={{background:`linear-gradient(135deg,${T.p},${T.dk})`,borderRadius:16,padding:"16px 18px",marginBottom:16,color:"#fff"}}>
+                <div style={{fontSize:12,fontWeight:800,opacity:.8,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.07em"}}>🤖 AI Summary</div>
+                <div style={{fontSize:14,lineHeight:1.6}}>{result.welcomeMessage}</div>
+              </div>
+            )}
+
+            <div style={{background:T.card,borderRadius:16,border:`1px solid ${T.bd}`,padding:"16px 18px",marginBottom:12}}>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:8}}>
+                {result.school&&<Pill label={`🏫 ${result.school}`} color={T.lt} textColor={T.dk}/>}
+                {result.program&&<Pill label={result.program} color={T.aml} textColor={T.am}/>}
+                <Pill label={`Passing: ${result.passingGrade||77}%`} color="#E8F5E9" textColor="#2E7D32"/>
+              </div>
+              {(result.courses||[]).map((c,i)=>(
+                <div key={i} style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.bd}`}}>
+                  <div style={{fontWeight:800,fontSize:14,color:T.ink,marginBottom:8}}>📚 {c.name}</div>
+                  {(c.categories||[]).map((cat,j)=>(
+                    <div key={j} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:`1px solid ${T.bd}`}}>
+                      <span style={{fontSize:13,color:T.ink}}>{cat.name}</span>
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        {cat.weight&&<span style={{fontSize:12,fontWeight:700,color:T.soft}}>{cat.weight}%</span>}
+                        <Pill label={cat.pillar} color={cat.pillar==="knowledge"?T.lt:cat.pillar==="skills"?"#E8F5E9":"#FFF3CD"} textColor={cat.pillar==="knowledge"?T.dk:cat.pillar==="skills"?"#2E7D32":"#E65100"}/>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:8}}>
+              <BigBtn full onClick={finishFromResult}>This looks right — let's go! 🎉</BigBtn>
+              <button onClick={()=>setStep("upload")} style={{background:"none",border:"none",color:T.soft,fontSize:13,cursor:"pointer",textDecoration:"underline",textAlign:"center"}}>Re-scan with a different photo</button>
+              <button onClick={()=>setStep("manual")} style={{background:"none",border:"none",color:T.soft,fontSize:13,cursor:"pointer",textDecoration:"underline",textAlign:"center"}}>Edit manually instead</button>
+            </div>
+          </>
+        )}
+
+        {/* Step: Manual */}
+        {step==="manual"&&(
+          <>
+            <div style={{textAlign:"center",marginBottom:24}}>
+              <div style={{fontSize:40,marginBottom:8}}>✏️</div>
+              <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.p}}>Quick Manual Setup</div>
+              <div style={{fontSize:14,color:T.soft,marginTop:4}}>Just the basics — you can customize everything later</div>
+            </div>
+            <div style={{background:T.card,borderRadius:20,padding:24,border:`1px solid ${T.bd}`,marginBottom:16}}>
+              <F label="School name"><Inp value={manualSchool} onChange={e=>setManualSchool(e.target.value)} placeholder="e.g. Lake Technical College"/></F>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <F label="Program">
+                  <select value={manualProg} onChange={e=>setManualProg(e.target.value)} style={IS()}>
+                    {["LPN","RN","CNA","ADN","BSN","MA","Other"].map(p=><option key={p}>{p}</option>)}
+                  </select>
+                </F>
+                <F label="Passing %"><input type="number" value={manualPass} onChange={e=>setManualPass(e.target.value)} style={IS()} placeholder="77"/></F>
+              </div>
+              <F label="First course name"><Inp value={manualCourse} onChange={e=>setManualCourse(e.target.value)} placeholder="e.g. Foundations 1, Nursing 101…"/></F>
+            </div>
+            <div style={{background:T.lt,borderRadius:12,padding:"12px 16px",marginBottom:20,fontSize:13,color:T.dk}}>
+              💡 You can add more courses and customize grade categories inside the app after setup!
+            </div>
+            <BigBtn full onClick={finishManual}>Set Up My App →</BigBtn>
+            <div style={{textAlign:"center",marginTop:12}}>
+              <button onClick={()=>setStep("upload")} style={{background:"none",border:"none",color:T.soft,fontSize:13,cursor:"pointer",textDecoration:"underline"}}>← Try the syllabus scan instead</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── GRADES ────────────────────────────────────────────────────
+function calcGrades(grades, categories) {
+  // Group by pillar, respecting weights within knowledge
+  const knowledgeCats = (categories||[]).filter(c=>c.pillar==="knowledge");
+  const skillsCats    = (categories||[]).filter(c=>c.pillar==="skills");
+  const profCats      = (categories||[]).filter(c=>c.pillar==="prof");
+
+  function weightedAvg(cats, grades) {
+    let ws=0, wt=0;
+    for (const cat of cats) {
+      const cg = grades.filter(g=>g.catId===cat.id);
+      if (!cg.length) continue;
+      const avg = cg.reduce((s,g)=>s+g.pct,0)/cg.length;
+      const w = cat.weight||1;
+      ws += avg*w; wt += w;
+    }
+    return wt ? ws/wt : null;
+  }
+
+  const k = weightedAvg(knowledgeCats, grades);
+  const s = weightedAvg(skillsCats.length?skillsCats:[{id:"skills",weight:1}], grades.filter(g=>g.pillar==="skills"));
+  const p = weightedAvg(profCats.length?profCats:[{id:"prof",weight:1}], grades.filter(g=>g.pillar==="prof"));
+  let overall=null,cnt=0;
+  if(k!==null){overall=(overall||0)+k;cnt++;} if(s!==null){overall=(overall||0)+s;cnt++;} if(p!==null){overall=(overall||0)+p;cnt++;}
+  return { k, s, p, overall:cnt?overall/cnt:null };
+}
+
+function GradesView({ courses, setCourses, gpa, setGpa, pass }) {
+  const [open,setOpen]   = useState(null);
+  const [sheet,setSheet] = useState(null);
+  const [gf,setGf]       = useState({ title:"", catId:"", pillar:"knowledge", earned:"", possible:"100", late:false });
+  const [targetPct,setTargetPct] = useState(pass||77);
+  const [nextOf,setNextOf]       = useState("100");
+  const [addSheet,setAddSheet]   = useState(false);
+  const [newName,setNewName]     = useState("");
+
+  function getGrades(courseId) { return (gpa.grades||[]).filter(g=>g.courseId===courseId); }
+
+  function saveGrade(courseId) {
+    if(!gf.title.trim()||!gf.earned) return;
+    const raw=(Number(gf.earned)/Number(gf.possible))*100;
+    const pct=gf.late?Math.max(0,raw-10):raw;
+    const grade={id:Date.now(),courseId,...gf,pct};
+    setGpa(g=>({...g,grades:[...(g.grades||[]),grade]}));
+    setSheet(null);
+    setGf({title:"",catId:"",pillar:"knowledge",earned:"",possible:"100",late:false});
+  }
+
+  function delGrade(id) { setGpa(g=>({...g,grades:(g.grades||[]).filter(gr=>gr.id!==id)})); }
+
+  function openGradeSheet(courseId) {
+    const course=courses.find(c=>c.id===courseId);
+    const firstCat=course?.categories?.[0];
+    setGf({title:"",catId:firstCat?.id||"",pillar:firstCat?.pillar||"knowledge",earned:"",possible:"100",late:false});
+    setSheet(courseId);
+  }
+
+  function addCourse() {
+    if(!newName.trim()) return;
+    const id="c"+Date.now();
+    setCourses(cs=>[...(cs||[]),{
+      id, name:newName.trim(), hours:300,
+      categories:[
+        {id:`${id}_k1`,name:"Unit Exams",weight:60,pillar:"knowledge"},
+        {id:`${id}_k2`,name:"Final Exam",weight:30,pillar:"knowledge"},
+        {id:`${id}_k3`,name:"Homework",weight:10,pillar:"knowledge"},
+        {id:`${id}_s1`,name:"Skills/Clinical",weight:100,pillar:"skills"},
+        {id:`${id}_p1`,name:"Professional Skills",weight:100,pillar:"prof"},
+      ]
+    }]);
+    setNewName(""); setAddSheet(false);
+  }
+
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div>
+          <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.ink}}>Grade Tracker</div>
+          <div style={{fontSize:12,color:T.soft}}>Your real grade — calculated correctly</div>
+        </div>
+        <SmBtn soft onClick={()=>setAddSheet(true)}>+ Course</SmBtn>
+      </div>
+
+      <div style={{background:T.aml,border:`1px solid ${T.am}44`,borderRadius:12,padding:"10px 14px",marginBottom:14,fontSize:12,color:T.ink}}>
+        <strong style={{color:T.am}}>💡 How it works:</strong> Your grade has 3 equal pillars — Knowledge, Skills, and Prof Skills. You need to pass ALL THREE. Most schools require 77%+ in each. NursePad tracks them all separately.
+      </div>
+
+      {(courses||[]).length===0&&(
+        <div style={{textAlign:"center",padding:"48px 0",color:T.soft}}>
+          <div style={{fontSize:40,marginBottom:10}}>🎓</div>
+          <div style={{fontWeight:700,fontSize:16,marginBottom:12}}>No courses yet</div>
+          <BigBtn onClick={()=>setAddSheet(true)}>+ Add Your First Course</BigBtn>
+        </div>
+      )}
+
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {(courses||[]).map(course=>{
+          const grades=getGrades(course.id);
+          const {k,s,p,overall}=calcGrades(grades,course.categories);
+          const isOpen=open===course.id;
+          const fail=[(k!==null&&k<(pass||77))?"Knowledge":null,(s!==null&&s<(pass||77))?"Skills":null,(p!==null&&p<(pass||77))?"Prof":null].filter(Boolean);
+
+          // Predictor: find exam-type grades
+          const examCat=(course.categories||[]).find(c=>c.pillar==="knowledge"&&c.weight>=50);
+          const examGrades=examCat?grades.filter(g=>g.catId===examCat.id):grades.filter(g=>g.pillar==="knowledge");
+          const curAvg=examGrades.length?examGrades.reduce((s,g)=>s+g.pct,0)/examGrades.length:null;
+          const needed=curAvg!==null?(targetPct*(examGrades.length+1))-(curAvg*examGrades.length):targetPct;
+          const pts=Math.ceil((needed/100)*Number(nextOf||100));
+
+          return (
+            <div key={course.id} style={{background:T.card,border:`2px solid ${fail.length?"#E53935":overall!==null?gc(overall)+"44":T.bd}`,borderRadius:18,overflow:"hidden"}}>
+              <div style={{padding:"16px 18px",cursor:"pointer",display:"flex",alignItems:"center",gap:14}} onClick={()=>setOpen(isOpen?null:course.id)}>
+                <GradeRing pct={overall}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:800,fontSize:16,color:T.ink,marginBottom:5}}>{course.name}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {fail.length>0
+                      ?fail.map(f=><Pill key={f} label={`⚠️ ${f}`} color="#FDDEDE" textColor="#C62828"/>)
+                      :overall!==null?<Pill label="On track ✓" color={T.lt} textColor={T.dk}/>
+                      :<Pill label="No grades yet" color={T.bd} textColor={T.soft}/>
+                    }
+                  </div>
+                </div>
+                <span style={{color:T.soft,fontSize:20}}>{isOpen?"▲":"▼"}</span>
+              </div>
+
+              {isOpen&&(
+                <div style={{borderTop:`1px solid ${T.bd}`,background:T.bg,padding:"16px 18px"}}>
+                  {/* Pillar bars */}
+                  <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:18}}>
+                    {[["📚 Knowledge",k,(course.categories||[]).filter(c=>c.pillar==="knowledge").map(c=>`${c.name} ${c.weight}%`).join(" · ")],
+                      ["🏥 Skills",s,"Lab & clinical performance"],
+                      ["⭐ Prof. Skills",p,"Attendance, attitude, teamwork"]].map(([lbl,val,sub])=>(
+                      <div key={lbl}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                          <div>
+                            <span style={{fontSize:13,fontWeight:700,color:T.ink}}>{lbl}</span>
+                            {sub&&<div style={{fontSize:10,color:T.soft}}>{sub}</div>}
+                          </div>
+                          <span style={{fontSize:13,fontWeight:800,color:gc(val)}}>{val!==null?val.toFixed(1)+"%":"—"}</span>
+                        </div>
+                        <div style={{background:T.bd,borderRadius:99,height:9,overflow:"hidden"}}>
+                          <div style={{width:`${Math.min(val||0,100)}%`,background:gc(val),height:"100%",borderRadius:99,transition:"width .4s"}}/>
+                        </div>
+                        {val!==null&&val<(pass||77)&&<div style={{fontSize:11,color:"#E53935",fontWeight:700,marginTop:2}}>⚠️ Below passing threshold!</div>}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Predictor */}
+                  <div style={{background:T.lt,borderRadius:14,padding:"14px",marginBottom:16}}>
+                    <div style={{fontSize:13,fontWeight:800,color:T.dk,marginBottom:10}}>🔮 What score do I need next?</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                      <div>
+                        <div style={{fontSize:10,fontWeight:700,color:T.soft,marginBottom:4,textTransform:"uppercase"}}>I want to hit %</div>
+                        <input type="number" value={targetPct} onChange={e=>setTargetPct(Number(e.target.value))} style={IS()} placeholder={String(pass||77)}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,fontWeight:700,color:T.soft,marginBottom:4,textTransform:"uppercase"}}>Next exam out of</div>
+                        <input type="number" value={nextOf} onChange={e=>setNextOf(e.target.value)} style={IS()} placeholder="100"/>
+                      </div>
+                    </div>
+                    {curAvg!==null&&<div style={{fontSize:12,color:T.soft,marginBottom:8}}>Current avg ({examGrades.length} grade{examGrades.length>1?"s":""}): <strong style={{color:T.ink}}>{curAvg.toFixed(1)}%</strong></div>}
+                    <div style={{background:needed>100?"#FDDEDE":T.card,borderRadius:10,padding:"12px",textAlign:"center"}}>
+                      {needed>100
+                        ?<div style={{color:"#E53935",fontWeight:700,fontSize:14}}>⚠️ Hard to reach with one exam — talk to your instructor about options.</div>
+                        :<div style={{color:gc(needed),fontWeight:800,fontSize:18}}>Need {needed.toFixed(1)}% = {pts}/{nextOf} pts</div>
+                      }
+                    </div>
+                  </div>
+
+                  {/* Grades list */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div style={{fontSize:11,fontWeight:700,color:T.soft,textTransform:"uppercase"}}>Grades ({grades.length})</div>
+                    <SmBtn soft onClick={()=>openGradeSheet(course.id)}>+ Add Grade</SmBtn>
+                  </div>
+                  {grades.length===0
+                    ?<div style={{textAlign:"center",padding:"12px 0",color:T.soft,fontSize:13}}>No grades yet — add your first one!</div>
+                    :<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {grades.map(g=>{
+                        const cat=(course.categories||[]).find(c=>c.id===g.catId);
+                        return(
+                          <div key={g.id} style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:10,padding:"10px 12px",display:"flex",alignItems:"center",gap:10}}>
+                            <div style={{width:40,height:40,borderRadius:10,background:gc(g.pct)+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                              <span style={{fontSize:13,fontWeight:800,color:gc(g.pct)}}>{g.pct.toFixed(0)}%</span>
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontWeight:700,fontSize:13,color:T.ink}}>{g.title}</div>
+                              <div style={{fontSize:11,color:T.soft}}>{cat?.name||g.pillar} · {g.earned}/{g.possible}{g.late?" · late −10":""}</div>
+                            </div>
+                            <SmBtn onClick={()=>delGrade(g.id)}>🗑️</SmBtn>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  }
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Add grade sheet */}
+      {sheet&&(()=>{
+        const course=courses.find(c=>c.id===sheet);
+        const cats=course?.categories||[];
+        const selCat=cats.find(c=>c.id===gf.catId)||cats[0];
+        const raw=gf.earned&&gf.possible?(Number(gf.earned)/Number(gf.possible))*100:null;
+        const adj=raw!==null?(gf.late?Math.max(0,raw-10):raw):null;
+        return(
+          <Sheet title={`Add Grade — ${course?.name}`} onClose={()=>setSheet(null)}>
+            <F label="Assignment / exam name"><Inp value={gf.title} onChange={e=>setGf(f=>({...f,title:e.target.value}))} placeholder='e.g. "Exam 1 — Vital Signs"' autoFocus/></F>
+            <F label="Category">
+              <select value={gf.catId} onChange={e=>{
+                const cat=cats.find(c=>c.id===e.target.value);
+                setGf(f=>({...f,catId:e.target.value,pillar:cat?.pillar||"knowledge"}));
+              }} style={IS()}>
+                {cats.map(c=><option key={c.id} value={c.id}>{c.name} ({c.pillar})</option>)}
+              </select>
+            </F>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <F label="Points earned"><input type="number" value={gf.earned} onChange={e=>setGf(f=>({...f,earned:e.target.value}))} style={IS()} placeholder="84"/></F>
+              <F label="Out of"><input type="number" value={gf.possible} onChange={e=>setGf(f=>({...f,possible:e.target.value}))} style={IS()} placeholder="100"/></F>
+            </div>
+            {adj!==null&&(
+              <div style={{background:gc(adj)+"22",border:`1.5px solid ${gc(adj)}44`,borderRadius:12,padding:"12px",marginBottom:14,textAlign:"center"}}>
+                <div style={{fontSize:28,fontWeight:800,color:gc(adj)}}>{adj.toFixed(1)}%</div>
+                <div style={{fontSize:13,color:gc(adj),fontWeight:600}}>{gl(adj)}{adj<(pass||77)?" — Below passing threshold":""}</div>
+                {gf.late&&<div style={{fontSize:11,color:T.soft,marginTop:2}}>10-pt late penalty applied</div>}
+              </div>
+            )}
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",background:T.aml,borderRadius:10,marginBottom:18}}>
+              <input type="checkbox" id="late" checked={gf.late} onChange={e=>setGf(f=>({...f,late:e.target.checked}))} style={{width:18,height:18,accentColor:T.am}}/>
+              <label htmlFor="late" style={{fontSize:13,color:T.ink,cursor:"pointer",fontWeight:600}}>Submitted/taken late (−10 pts)</label>
+            </div>
+            <BigBtn full onClick={()=>saveGrade(sheet)}>Save Grade ✓</BigBtn>
+          </Sheet>
+        );
+      })()}
+
+      {addSheet&&(
+        <Sheet title="Add a Course" onClose={()=>setAddSheet(false)}>
+          <F label="Course name"><Inp value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Foundations 1, Med-Surg, Nursing 102…" autoFocus/></F>
+          <div style={{background:T.lt,borderRadius:10,padding:"10px 14px",marginBottom:18,fontSize:13,color:T.dk}}>Standard grade categories will be added. You can edit them in Settings.</div>
+          <BigBtn full onClick={addCourse}>Add Course</BigBtn>
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+// ── TASKS ─────────────────────────────────────────────────────
+function TasksView({ tasks, setTasks }) {
+  const [sheet,setSheet]=useState(false);
+  const [edit,setEdit]=useState(null);
+  const [filter,setFilter]=useState("pending");
+  const [form,setForm]=useState({title:"",due:"",priority:"medium",notes:""});
+  const tk=dateKey(TODAY);
+  function open(t){setEdit(t||null);setForm(t?{...t}:{title:"",due:"",priority:"medium",notes:""});setSheet(true);}
+  function saveTask(){if(!form.title.trim())return;if(edit)setTasks(ts=>ts.map(t=>t.id===edit.id?{...form,id:t.id}:t));else setTasks(ts=>[...ts,{...form,id:Date.now(),done:false}]);setSheet(false);}
+  function tog(id){setTasks(ts=>ts.map(t=>t.id===id?{...t,done:!t.done}:t));}
+  function del(id){setTasks(ts=>ts.filter(t=>t.id!==id));}
+  const overdue=tasks.filter(t=>!t.done&&t.due&&t.due<tk);
+  const shown=tasks.filter(t=>filter==="done"?t.done:!t.done).sort((a,b)=>({high:0,medium:1,low:2}[a.priority]||1)-({high:0,medium:1,low:2}[b.priority]||1));
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.ink}}>Tasks</div>
+        <BigBtn onClick={()=>open(null)}>+ Add</BigBtn>
+      </div>
+      {overdue.length>0&&<div style={{background:"#FDDEDE",borderRadius:14,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontSize:12,fontWeight:800,color:"#C62828",marginBottom:6,textTransform:"uppercase"}}>⚡ Overdue</div>
+        {overdue.map(t=><div key={t.id} style={{fontSize:13,color:"#C62828",padding:"2px 0"}}>• {t.title}</div>)}
+      </div>}
+      <div style={{display:"flex",gap:8,marginBottom:16}}>
+        {[["pending","To Do"],["done","Done"]].map(([f,l])=>(
+          <button key={f} onClick={()=>setFilter(f)} style={{background:filter===f?T.p:"transparent",color:filter===f?"#fff":T.soft,border:`2px solid ${filter===f?T.p:T.bd}`,borderRadius:20,padding:"6px 20px",fontWeight:700,fontSize:13,cursor:"pointer",flex:1}}>{l} ({tasks.filter(t=>f==="done"?t.done:!t.done).length})</button>
+        ))}
+      </div>
+      {shown.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.soft}}><div style={{fontSize:36,marginBottom:8}}>{filter==="done"?"🎉":"✨"}</div><div style={{fontWeight:600,fontSize:15}}>{filter==="done"?"Nothing yet":"All caught up!"}</div></div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {shown.map(task=>(
+          <div key={task.id} style={{background:T.card,border:`1.5px solid ${task.done?T.bd:PRI_C[task.priority]?.bg||T.bd}`,borderRadius:14,padding:"14px 16px",display:"flex",gap:12,alignItems:"flex-start",opacity:task.done?.5:1}}>
+            <button onClick={()=>tog(task.id)} style={{width:24,height:24,borderRadius:99,border:`2.5px solid ${task.done?T.p:T.bd}`,background:task.done?T.p:"transparent",cursor:"pointer",flexShrink:0,marginTop:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {task.done&&<span style={{color:"#fff",fontSize:12,fontWeight:800}}>✓</span>}
+            </button>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontWeight:700,fontSize:14,color:T.ink,textDecoration:task.done?"line-through":"none",marginBottom:4}}>{task.title}</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                <Pill label={task.priority} color={PRI_C[task.priority]?.bg} textColor={PRI_C[task.priority]?.t}/>
+                {task.due&&<span style={{fontSize:11,color:task.due<tk&&!task.done?"#E53935":T.soft,fontWeight:task.due<tk&&!task.done?700:400}}>📅 {task.due}</span>}
+              </div>
+              {task.notes&&<div style={{fontSize:12,color:T.soft,marginTop:4}}>{task.notes}</div>}
+            </div>
+            <div style={{display:"flex",gap:2}}><SmBtn onClick={()=>open(task)}>✏️</SmBtn><SmBtn onClick={()=>del(task.id)}>🗑️</SmBtn></div>
+          </div>
+        ))}
+      </div>
+      {sheet&&<Sheet title={edit?"Edit Task":"New Task"} onClose={()=>setSheet(false)}>
+        <F label="Task"><Inp value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="What do you need to do?" autoFocus/></F>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <F label="Due date"><input type="date" value={form.due||""} onChange={e=>setForm(f=>({...f,due:e.target.value}))} style={IS()}/></F>
+          <F label="Priority"><select value={form.priority} onChange={e=>setForm(f=>({...f,priority:e.target.value}))} style={IS()}><option value="high">🔴 High</option><option value="medium">🟡 Medium</option><option value="low">🟢 Low</option></select></F>
+        </div>
+        <F label="Notes (optional)"><TA value={form.notes||""} onChange={e=>setForm(f=>({...f,notes:e.target.value}))}/></F>
+        <BigBtn full onClick={saveTask}>Save Task</BigBtn>
+      </Sheet>}
+    </div>
+  );
+}
+
+// ── DRUG CARDS ────────────────────────────────────────────────
+function DrugView({ meds, setMeds }) {
+  const [search,setSearch]=useState("");
+  const [sheet,setSheet]=useState(false);
+  const [edit,setEdit]=useState(null);
+  const [exp,setExp]=useState(null);
+  const blank={name:"",generic:"",category:"Other",route:"",dose:"",action:"",sideEffects:"",nursing:"",contraindications:"",notes:""};
+  const [form,setForm]=useState(blank);
+  const CATS=["Cardiac","Respiratory","Neuro","Antibiotic","Pain","Endocrine","Psych","Other"];
+  function open(m){setEdit(m||null);setForm(m?{...m}:blank);setSheet(true);}
+  function saveMed(){if(!form.name.trim())return;if(edit)setMeds(ms=>ms.map(m=>m.id===edit.id?{...form,id:m.id}:m));else setMeds(ms=>[...ms,{...form,id:Date.now()}]);setSheet(false);}
+  const shown=meds.filter(m=>{const q=search.toLowerCase();return !q||m.name.toLowerCase().includes(q)||(m.generic||"").toLowerCase().includes(q);});
+  const IR=({label,val,bg})=>val?<div style={{background:bg,borderRadius:10,padding:"8px 12px",marginBottom:6}}><div style={{fontSize:10,fontWeight:800,color:T.soft,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:2}}>{label}</div><div style={{fontSize:13,color:T.ink,whiteSpace:"pre-wrap"}}>{val}</div></div>:null;
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div><div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.ink}}>Drug Cards</div><div style={{fontSize:12,color:T.soft}}>{meds.length} saved</div></div>
+        <BigBtn onClick={()=>open(null)}>+ Add</BigBtn>
+      </div>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search by name…" style={{...IS(),marginBottom:14}}/>
+      {shown.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:T.soft}}><div style={{fontSize:40,marginBottom:8}}>💊</div><div style={{fontWeight:600}}>{search?"No results":"Add your first drug card!"}</div></div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {shown.map(med=>(
+          <div key={med.id} style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:14,overflow:"hidden"}}>
+            <div style={{padding:"14px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}} onClick={()=>setExp(exp===med.id?null:med.id)}>
+              <div style={{width:44,height:44,borderRadius:12,background:T.lt,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>💊</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:800,fontSize:15,color:T.ink}}>{med.name}</div>
+                <div style={{fontSize:12,color:T.soft}}>{med.generic&&<span style={{fontStyle:"italic"}}>{med.generic} · </span>}{med.category}</div>
+              </div>
+              <div style={{fontSize:20,color:T.soft}}>{exp===med.id?"▲":"▼"}</div>
+            </div>
+            {exp===med.id&&<div style={{borderTop:`1px solid ${T.bd}`,padding:"14px 16px",background:T.bg}}>
+              {med.route&&<div style={{fontSize:13,color:T.ink,marginBottom:10}}><strong>Route:</strong> {med.route}{med.dose&&<span> · <strong>Dose:</strong> {med.dose}</span>}</div>}
+              <IR label="Action" val={med.action} bg={T.lt}/>
+              <IR label="Side Effects" val={med.sideEffects} bg="#FFF3CD"/>
+              <IR label="Nursing Considerations" val={med.nursing} bg={T.lt}/>
+              <IR label="Contraindications" val={med.contraindications} bg="#FDDEDE"/>
+              <IR label="Notes / Mnemonics" val={med.notes} bg={T.bg}/>
+              <div style={{display:"flex",gap:8,marginTop:12}}>
+                <SmBtn soft onClick={()=>open(med)}>✏️ Edit</SmBtn>
+                <SmBtn danger onClick={()=>setMeds(ms=>ms.filter(m=>m.id!==med.id))}>🗑️ Delete</SmBtn>
+              </div>
+            </div>}
+          </div>
+        ))}
+      </div>
+      {sheet&&<Sheet title={edit?"Edit Drug":"New Drug Card"} onClose={()=>setSheet(false)} tall>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <F label="Brand name"><Inp value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="Lasix"/></F>
+          <F label="Generic name"><Inp value={form.generic} onChange={e=>setForm(f=>({...f,generic:e.target.value}))} placeholder="furosemide"/></F>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <F label="Category"><select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))} style={IS()}>{CATS.map(c=><option key={c}>{c}</option>)}</select></F>
+          <F label="Route · Dose"><Inp value={form.route} onChange={e=>setForm(f=>({...f,route:e.target.value}))} placeholder="PO · 20–80mg"/></F>
+        </div>
+        {[["Action","action","What it does…"],["Side Effects","sideEffects","Common + serious…"],["Nursing Considerations","nursing","Monitor, teach…"],["Contraindications","contraindications","Who can't take it…"],["Notes / Mnemonics","notes","Memory tricks!"]].map(([l,k,ph])=>(
+          <F key={k} label={l}><TA value={form[k]||""} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))} placeholder={ph}/></F>
+        ))}
+        <BigBtn full onClick={saveMed}>Save Drug Card 💊</BigBtn>
+      </Sheet>}
+    </div>
+  );
+}
+
+// ── VITALS ────────────────────────────────────────────────────
+const VITALS=[
+  {g:"Blood Pressure 🫀",c:"#FDDEDE",a:"#C62828",rows:[["Normal","< 120/80 mmHg"],["Elevated","120–129 / < 80"],["HTN Stage 1","130–139 / 80–89"],["HTN Stage 2","≥ 140 / ≥ 90"],["Crisis","> 180 / > 120 ⚠️"],["Hypotension","< 90/60 mmHg"]],tip:"Same arm, seated, arm at heart level, 5 min rest."},
+  {g:"Heart Rate 💓",c:"#FFF3CD",a:"#E65100",rows:[["Adult","60–100 bpm"],["Bradycardia","< 60 bpm"],["Tachycardia","> 100 bpm"],["Infant (0–1y)","100–160 bpm"],["Child (1–10y)","70–120 bpm"]],tip:"Count apical for 1 full minute on irregular rhythms."},
+  {g:"Respiratory Rate 🫁",c:"#E8F5E9",a:"#2E7D32",rows:[["Adult","12–20 /min"],["Bradypnea","< 12 /min"],["Tachypnea","> 20 /min"],["Infant","30–60 /min"],["Child 1–5y","20–40 /min"]],tip:"Count WITHOUT telling patient — they'll change it!"},
+  {g:"Temperature 🌡️",c:"#EDE8F5",a:"#7B5EA7",rows:[["Oral normal","36.1–37.2°C / 97–99°F"],["Rectal","+0.5°C vs oral (most accurate)"],["Axillary","−0.5°C vs oral (least accurate)"],["Fever","≥ 38.1°C / ≥ 100.6°F"],["Hyperthermia","> 40°C ⚠️"],["Hypothermia","< 35°C ⚠️"]],tip:"Always document the route. Wait 15 min after hot/cold drinks for oral."},
+  {g:"SpO₂ 💨",c:"#D4E4DC",a:"#3D5249",rows:[["Normal","95–100% (room air)"],["Mild low","91–94%"],["Moderate low","86–90%"],["Severe","≤ 85% ⚠️"],["COPD target","88–92%"]],tip:"CO poisoning can give false-normal readings!"},
+  {g:"Pain Scale 😣",c:"#FFF3CD",a:"#E65100",rows:[["0","No pain"],["1–3","Mild"],["4–6","Moderate"],["7–9","Severe"],["10","Worst possible ⚠️"]],tip:"Pain is SUBJECTIVE. Always believe your patient."},
+];
+function VitalsView(){
+  const [exp,setExp]=useState(null);
+  return(
+    <div>
+      <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.ink,marginBottom:4}}>Vital Signs</div>
+      <div style={{fontSize:12,color:T.soft,marginBottom:16}}>Quick reference — tap any to expand</div>
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {VITALS.map(v=>{const isOpen=exp===v.g;return(
+          <div key={v.g} style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:16,overflow:"hidden"}}>
+            <div style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12,cursor:"pointer",background:isOpen?v.c:T.card}} onClick={()=>setExp(isOpen?null:v.g)}>
+              <div style={{width:40,height:40,borderRadius:12,background:v.c,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{v.g.split(" ").slice(-1)[0]}</div>
+              <span style={{fontWeight:800,fontSize:15,color:T.ink,flex:1}}>{v.g.slice(0,v.g.lastIndexOf(" "))}</span>
+              <span style={{color:T.soft,fontSize:18}}>{isOpen?"▲":"▼"}</span>
+            </div>
+            {isOpen&&<div style={{borderTop:`1px solid ${T.bd}`,padding:"14px 16px",background:T.bg}}>
+              <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:12}}>
+                {v.rows.map(([cat,val],i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 12px",background:i%2===0?T.card:T.bg,borderRadius:8}}>
+                    <span style={{fontSize:13,fontWeight:600,color:T.ink}}>{cat}</span>
+                    <span style={{fontSize:13,fontWeight:800,color:v.a,textAlign:"right"}}>{val}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{background:v.c,borderRadius:10,padding:"10px 14px"}}>
+                <div style={{fontSize:10,fontWeight:800,color:v.a,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:3}}>🩺 Tip</div>
+                <div style={{fontSize:13,color:T.ink,lineHeight:1.6}}>{v.tip}</div>
+              </div>
+            </div>}
+          </div>
+        );})}
+      </div>
+    </div>
+  );
+}
+
+// ── MODULES ───────────────────────────────────────────────────
+function ModulesView({modules,setModules}){
+  const [sheet,setSheet]=useState(false);
+  const [edit,setEdit]=useState(null);
+  const [exp,setExp]=useState(null);
+  const [tf,setTf]=useState({word:"",def:""});
+  const blank={name:"",startDate:"",endDate:"",status:"upcoming",summary:"",objectives:"",keyTerms:[],resources:""};
+  const [form,setForm]=useState(blank);
+  function open(m){setEdit(m||null);setForm(m?{...m}:blank);setTf({word:"",def:""});setSheet(true);}
+  function save(){if(!form.name.trim())return;if(edit)setModules(ms=>ms.map(m=>m.id===edit.id?{...form,id:m.id}:m));else setModules(ms=>[...ms,{...form,id:Date.now()}]);setSheet(false);}
+  function addTerm(){if(!tf.word.trim())return;setForm(f=>({...f,keyTerms:[...(f.keyTerms||[]),{id:Date.now(),word:tf.word,def:tf.def}]}));setTf({word:"",def:""});}
+  function removeTerm(id){setForm(f=>({...f,keyTerms:f.keyTerms.filter(t=>t.id!==id)}));}
+  const SC={upcoming:{bg:"#FFF3CD",t:"#E65100"},active:{bg:T.lt,t:T.dk},completed:{bg:T.bg,t:T.soft}};
+  const sorted=[...modules].sort((a,b)=>({active:0,upcoming:1,completed:2}[a.status]||1)-({active:0,upcoming:1,completed:2}[b.status]||1));
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+        <div><div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.ink}}>Modules</div><div style={{fontSize:12,color:T.soft}}>Topics, key terms & objectives</div></div>
+        <BigBtn onClick={()=>open(null)}>+ Add</BigBtn>
+      </div>
+      {modules.length===0&&<div style={{textAlign:"center",padding:"48px 0",color:T.soft}}><div style={{fontSize:40,marginBottom:8}}>📚</div><div style={{fontWeight:600,fontSize:15}}>Add your first module!</div></div>}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {sorted.map(mod=>{const isOpen=exp===mod.id;const sc=SC[mod.status]||SC.upcoming;return(
+          <div key={mod.id} style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:14,overflow:"hidden"}}>
+            <div style={{padding:"14px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:12}} onClick={()=>setExp(isOpen?null:mod.id)}>
+              <div style={{width:42,height:42,borderRadius:12,background:sc.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📖</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:800,fontSize:14,color:T.ink,marginBottom:4}}>{mod.name}</div>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                  <Pill label={mod.status} color={sc.bg} textColor={sc.t}/>
+                  {mod.keyTerms?.length>0&&<Pill label={`${mod.keyTerms.length} terms`} color={T.lt} textColor={T.dk}/>}
+                  {(mod.startDate||mod.endDate)&&<span style={{fontSize:11,color:T.soft}}>{mod.startDate&&mod.endDate?`${mod.startDate} → ${mod.endDate}`:mod.startDate||mod.endDate}</span>}
+                </div>
+              </div>
+              <span style={{color:T.soft,fontSize:18}}>{isOpen?"▲":"▼"}</span>
+            </div>
+            {isOpen&&<div style={{borderTop:`1px solid ${T.bd}`,padding:"14px 16px",background:T.bg}}>
+              {mod.summary&&<div style={{fontSize:13,color:T.ink,lineHeight:1.6,marginBottom:10}}>{mod.summary}</div>}
+              {mod.objectives&&<div style={{background:T.lt,borderRadius:10,padding:"10px 12px",marginBottom:10}}><div style={{fontSize:10,fontWeight:800,color:T.dk,textTransform:"uppercase",marginBottom:4}}>Learning Objectives</div><div style={{fontSize:12,color:T.ink,whiteSpace:"pre-wrap",lineHeight:1.6}}>{mod.objectives}</div></div>}
+              {mod.keyTerms?.length>0&&<div style={{marginBottom:10}}><div style={{fontSize:10,fontWeight:800,color:T.soft,textTransform:"uppercase",marginBottom:6}}>Key Terms</div><div style={{display:"flex",flexDirection:"column",gap:5}}>{mod.keyTerms.map(t=><div key={t.id} style={{background:T.lt,borderRadius:8,padding:"7px 11px"}}><span style={{fontWeight:800,fontSize:12,color:T.dk}}>{t.word}</span>{t.def&&<span style={{fontSize:12,color:T.ink}}> — {t.def}</span>}</div>)}</div></div>}
+              {mod.resources&&<div style={{fontSize:12,color:T.soft,marginBottom:10}}>📚 {mod.resources}</div>}
+              <SmBtn soft onClick={()=>open(mod)}>✏️ Edit</SmBtn>
+            </div>}
+          </div>
+        );})}
+      </div>
+      {sheet&&<Sheet title={edit?"Edit Module":"New Module"} onClose={()=>setSheet(false)} tall>
+        <F label="Module name"><Inp value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Vital Signs & Assessment"/></F>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+          <F label="Start"><input type="date" value={form.startDate||""} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={IS()}/></F>
+          <F label="End"><input type="date" value={form.endDate||""} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={IS()}/></F>
+          <F label="Status"><select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} style={IS()}><option value="upcoming">Upcoming</option><option value="active">Active</option><option value="completed">Done ✓</option></select></F>
+        </div>
+        <F label="Overview"><TA value={form.summary||""} onChange={e=>setForm(f=>({...f,summary:e.target.value}))} placeholder="What's this module about?"/></F>
+        <F label="Learning objectives"><TA value={form.objectives||""} onChange={e=>setForm(f=>({...f,objectives:e.target.value}))} placeholder="What should you know by the end?"/></F>
+        <div style={{marginBottom:18}}>
+          <div style={{fontSize:11,fontWeight:800,color:T.soft,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>Key Terms</div>
+          {(form.keyTerms||[]).map(t=><div key={t.id} style={{display:"flex",gap:8,alignItems:"center",padding:"4px 0"}}><span style={{flex:1,fontSize:13,color:T.ink}}><strong>{t.word}</strong>{t.def?" — "+t.def:""}</span><SmBtn onClick={()=>removeTerm(t.id)}>✕</SmBtn></div>)}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 2fr auto",gap:8,marginTop:8,alignItems:"flex-end"}}>
+            <F label="Term"><Inp value={tf.word} onChange={e=>setTf(f=>({...f,word:e.target.value}))} placeholder="Bradycardia"/></F>
+            <F label="Definition"><Inp value={tf.def} onChange={e=>setTf(f=>({...f,def:e.target.value}))} placeholder="HR < 60 bpm"/></F>
+            <SmBtn soft onClick={addTerm}>Add</SmBtn>
+          </div>
+        </div>
+        <F label="Resources / Chapters"><Inp value={form.resources||""} onChange={e=>setForm(f=>({...f,resources:e.target.value}))} placeholder="e.g. Ch. 12–14"/></F>
+        <BigBtn full onClick={save}>Save Module 📚</BigBtn>
+      </Sheet>}
+    </div>
+  );
+}
+
+// ── SETTINGS ──────────────────────────────────────────────────
+function SettingsView({ config, setConfig, themeId, setThemeId }) {
+  const [form,setForm]=useState({...config});
+  const [saved,setSaved]=useState(false);
+  const [rescan,setRescan]=useState(false);
+  const [scanning,setScanning]=useState(false);
+  const fileRef=useRef();
+
+  async function handleRescan(e) {
+    const file=e.target.files?.[0]; if(!file) return;
+    setScanning(true);
+    try {
+      const base64=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.onerror=()=>rej();r.readAsDataURL(file);});
+      const result=await parseSyllabus(base64,file.type||"image/jpeg");
+      if(result) {
+        setForm(f=>({...f, school:result.school||f.school, program:result.program||f.program, passingGrade:result.passingGrade||f.passingGrade}));
+        setConfig(f=>({...f, courses:(result.courses||[]).map((c,i)=>({...c,id:`c${i+1}`,categories:(c.categories||[]).map((cat,j)=>({...cat,id:`cat${i}${j}`}))})) }));
+      }
+    } catch {}
+    setScanning(false); setRescan(false);
+  }
+
+  function saveAll(){setConfig({...form,themeId});setSaved(true);setTimeout(()=>setSaved(false),2000);}
+
+  return(
+    <div>
+      <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,color:T.ink,marginBottom:20}}>My Profile</div>
+      <div style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:16,padding:"20px",marginBottom:14}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.ink,marginBottom:14}}>👤 Personal</div>
+        <F label="Your name"><Inp value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="First name"/></F>
+        <F label="Icon">
+          <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+            {["🩺","💉","💊","🫀","🌸","⭐","🔥","💪","🦋","👩‍⚕️","🌺","💅"].map(em=>(
+              <button key={em} onClick={()=>setForm(f=>({...f,emoji:em}))} style={{fontSize:20,background:form.emoji===em?T.lt:"transparent",border:form.emoji===em?`2px solid ${T.p}`:"2px solid transparent",borderRadius:9,padding:"5px 9px",cursor:"pointer"}}>{em}</button>
+            ))}
+          </div>
+        </F>
+        <F label="Motto"><Inp value={form.motto||""} onChange={e=>setForm(f=>({...f,motto:e.target.value}))} placeholder='e.g. "Future nurse — unstoppable!"'/></F>
+      </div>
+      <div style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:16,padding:"20px",marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontSize:13,fontWeight:800,color:T.ink}}>🏫 School & Grading</div>
+          <SmBtn soft onClick={()=>setRescan(true)}>📸 Re-scan Syllabus</SmBtn>
+        </div>
+        {scanning&&<div style={{textAlign:"center",padding:"16px 0",color:T.p,fontWeight:700}}>🤖 Reading syllabus...</div>}
+        <F label="School"><Inp value={form.school||""} onChange={e=>setForm(f=>({...f,school:e.target.value}))} placeholder="School name"/></F>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <F label="Program"><select value={form.program||"LPN"} onChange={e=>setForm(f=>({...f,program:e.target.value}))} style={IS()}>{["LPN","RN","CNA","ADN","BSN","MA","Other"].map(p=><option key={p}>{p}</option>)}</select></F>
+          <F label="Passing %"><input type="number" value={form.passingGrade||77} onChange={e=>setForm(f=>({...f,passingGrade:Number(e.target.value)}))} style={IS()}/></F>
+        </div>
+        {rescan&&<><input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={handleRescan}/><BigBtn outline onClick={()=>fileRef.current?.click()}>📸 Take Photo of Syllabus</BigBtn></>}
+      </div>
+      <div style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:16,padding:"20px",marginBottom:20}}>
+        <div style={{fontSize:13,fontWeight:800,color:T.ink,marginBottom:12}}>🎨 Theme</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          {THEMES.map(t=>(
+            <div key={t.id} onClick={()=>{setThemeId(t.id);applyTheme(t.id);}} style={{borderRadius:12,overflow:"hidden",border:themeId===t.id?`3px solid ${t.p}`:`1.5px solid ${t.bd}`,cursor:"pointer"}}>
+              <div style={{height:20,background:`linear-gradient(90deg,${t.p},${t.am})`}}/>
+              <div style={{padding:"6px 10px",background:t.bg}}><div style={{fontSize:12,fontWeight:700,color:t.ink}}>{t.name}</div>{themeId===t.id&&<div style={{fontSize:10,color:t.p,fontWeight:700}}>✓ Active</div>}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:12,alignItems:"center"}}>
+        <BigBtn full onClick={saveAll}>Save Changes</BigBtn>
+        {saved&&<span style={{fontSize:14,color:T.p,fontWeight:800}}>Saved! 🎉</span>}
+      </div>
+    </div>
+  );
+}
+
+// ── HOME ──────────────────────────────────────────────────────
+function HomeView({ state, onNavigate }) {
+  const { tasks=[],meds=[],modules=[],courses=[],gpa={},config={} } = state;
+  const tk=dateKey(TODAY);
+  const pass=config.passingGrade||77;
+  const urgent=tasks.filter(t=>!t.done&&t.due&&t.due<=tk);
+  const due7=tasks.filter(t=>!t.done&&t.due&&t.due>tk&&t.due<=dateKey(new Date(Date.now()+7*864e5)));
+  const done=tasks.filter(t=>t.done).length;
+  const activeMod=modules.find(m=>m.startDate&&m.endDate&&m.startDate<=tk&&m.endDate>=tk);
+
+  const gradeData=(courses||[]).map(c=>{
+    const grades=(gpa.grades||[]).filter(g=>g.courseId===c.id);
+    const {overall}=calcGrades(grades,c.categories);
+    return{...c,grades,overall};
+  }).filter(c=>c.grades.length>0);
+
+  return(
+    <div>
+      {/* Hero */}
+      <div style={{background:`linear-gradient(135deg,${T.p},${T.dk})`,borderRadius:20,padding:"22px",marginBottom:18,color:"#fff"}}>
+        <div style={{fontSize:11,opacity:.75,marginBottom:2,textTransform:"uppercase",letterSpacing:"0.12em"}}>{DAYS[TODAY.getDay()]} · {MONTHS_FULL[TODAY.getMonth()]} {TODAY.getDate()}, {TODAY.getFullYear()}</div>
+        <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:700,marginBottom:config.motto?4:8}}>
+          {config.name?`Hey Nurse ${config.name} ${config.emoji||"💕"}`:"Hey, future nurse! 💕"}
+        </div>
+        {config.motto&&<div style={{fontSize:13,opacity:.9,fontStyle:"italic",marginBottom:8}}>"{config.motto}"</div>}
+        {activeMod
+          ?<div style={{fontSize:12,background:"rgba(255,255,255,.2)",borderRadius:10,padding:"6px 12px",display:"inline-block"}}>📖 Studying: {activeMod.name.length>32?activeMod.name.slice(0,32)+"…":activeMod.name}</div>
+          :<div style={{fontSize:12,opacity:.85}}>{urgent.length?`⚡ ${urgent.length} overdue task${urgent.length>1?"s":""}`:due7.length?`📅 ${due7.length} due this week`:"You're all caught up! ✨"}</div>
+        }
+        {config.school&&<div style={{fontSize:11,opacity:.6,marginTop:6}}>{config.school} · {config.program}</div>}
+      </div>
+
+      {/* Stats */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:16}}>
+        {[
+          {icon:"📋",val:tasks.filter(t=>!t.done).length,label:"To Do",tab:"tasks",color:T.p},
+          {icon:"⚡",val:urgent.length,label:"Overdue",tab:"tasks",color:urgent.length?"#E53935":T.p},
+          {icon:"📚",val:modules.length,label:"Modules",tab:"modules",color:T.am},
+          {icon:"💊",val:meds.length,label:"Drugs",tab:"meds",color:T.dk},
+        ].map(item=>(
+          <div key={item.label} onClick={()=>onNavigate(item.tab)} style={{background:T.card,border:`1.5px solid ${T.bd}`,borderRadius:14,padding:"12px 6px",textAlign:"center",cursor:"pointer"}}>
+            <div style={{fontSize:20,marginBottom:2}}>{item.icon}</div>
+            <div style={{fontSize:22,fontWeight:800,color:item.color,fontFamily:"Georgia,serif",lineHeight:1}}>{item.val}</div>
+            <div style={{fontSize:9,color:T.soft,textTransform:"uppercase",letterSpacing:"0.05em",marginTop:2}}>{item.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Task progress */}
+      {tasks.length>0&&<div style={{background:T.card,border:`1px solid ${T.bd}`,borderRadius:14,padding:"14px 16px",marginBottom:12}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}><span style={{fontWeight:700,fontSize:14,color:T.ink}}>Task progress</span><span style={{fontSize:13,color:T.soft}}>{done}/{tasks.length}</span></div>
+        <div style={{background:T.bg,borderRadius:99,height:10,overflow:"hidden"}}><div style={{width:`${tasks.length?Math.round(done/tasks.length*100):0}%`,background:`linear-gradient(90deg,${T.p},${T.am})`,height:"100%",borderRadius:99,transition:"width .5s"}}/></div>
+      </div>}
+
+      {/* Grades */}
+      {gradeData.length>0&&<div style={{background:T.lt,border:`1px solid ${T.bd}`,borderRadius:14,padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontWeight:800,fontSize:12,color:T.dk,textTransform:"uppercase",letterSpacing:"0.07em",marginBottom:10}}>🎓 Grade Summary</div>
+        {gradeData.map(c=>(
+          <div key={c.id||c.name} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:`1px solid ${T.bd}`}}>
+            <GradeRing pct={c.overall} size={40}/>
+            <div style={{flex:1}}><div style={{fontSize:13,fontWeight:700,color:T.ink}}>{c.name}</div><div style={{fontSize:11,color:T.soft}}>{c.overall!==null?`${c.overall.toFixed(1)}% overall`:"No grades"}</div></div>
+            <SmBtn soft onClick={()=>onNavigate("grades")}>Details →</SmBtn>
+          </div>
+        ))}
+      </div>}
+
+      {/* Overdue */}
+      {urgent.length>0&&<div style={{background:"#FDDEDE",border:"1px solid #FFCDD2",borderRadius:14,padding:"14px 16px",marginBottom:12}}>
+        <div style={{fontWeight:800,fontSize:12,color:"#C62828",textTransform:"uppercase",marginBottom:8}}>⚡ Overdue</div>
+        {urgent.slice(0,3).map(t=><div key={t.id} style={{fontSize:13,color:"#C62828",padding:"2px 0",fontWeight:600}}>• {t.title}</div>)}
+        {urgent.length>3&&<div style={{fontSize:12,color:"#C62828",marginTop:4,cursor:"pointer",textDecoration:"underline",fontWeight:700}} onClick={()=>onNavigate("tasks")}>+{urgent.length-3} more</div>}
+      </div>}
+
+      {/* This week */}
+      {due7.length>0&&<div style={{background:T.aml,border:`1px solid ${T.am}44`,borderRadius:14,padding:"14px 16px"}}>
+        <div style={{fontWeight:800,fontSize:12,color:T.am,textTransform:"uppercase",marginBottom:8}}>📅 This Week</div>
+        {due7.slice(0,4).map(t=><div key={t.id} style={{display:"flex",justifyContent:"space-between",padding:"3px 0",borderBottom:`1px solid ${T.am}22`}}><span style={{fontSize:13,color:T.ink}}>{t.title}</span><span style={{fontSize:11,color:T.soft}}>{t.due}</span></div>)}
+      </div>}
+    </div>
+  );
+}
+
+// ── ROOT ──────────────────────────────────────────────────────
+const TABS=[{id:"home",icon:"🏠",label:"Home"},{id:"grades",icon:"🎓",label:"Grades"},{id:"tasks",icon:"📋",label:"Tasks"},{id:"meds",icon:"💊",label:"Drugs"},{id:"modules",icon:"📚",label:"Modules"},{id:"vitals",icon:"🩺",label:"Vitals"},{id:"settings",icon:"⚙️",label:"Me"}];
+
+function App() {
+  const [state,setState]=useState(()=>load());
+  const [tab,setTab]=useState("home");
+  const [,tick]=useState(0);
+
+  useEffect(()=>{save(state);},[state]);
+
+  const set=useCallback(key=>fn=>setState(s=>({...s,[key]:typeof fn==="function"?fn(s[key]||[]):fn})),[]);
+  const setConfig=useCallback(v=>setState(s=>({...s,config:typeof v==="function"?v(s.config||{}):v})),[]);
+  const setThemeId=useCallback(id=>{setState(s=>({...s,config:{...(s.config||{}),themeId:id}}));applyTheme(id);tick(n=>n+1);},[]);
+  const setCourses=useCallback(v=>setState(s=>({...s,courses:typeof v==="function"?v(s.courses||[]):v})),[]);
+  const setGpa=useCallback(v=>setState(s=>({...s,gpa:typeof v==="function"?v(s.gpa||{}):v})),[]);
+
+  applyTheme(state.config?.themeId||"pink");
+
+  if(!state.unlocked) return <Unlock onUnlock={code=>setState(s=>({...s,unlocked:true,code}))}/>;
+
+  if(!state.setup) return <AISetup onDone={cfg=>{
+    setState(s=>({...s,setup:true,config:cfg,courses:cfg.courses||[]}));
+    applyTheme(cfg.themeId||"pink");
+  }}/>;
+
+  const config=state.config||{};
+  applyTheme(config.themeId||"pink");
+
+  const fullState={tasks:state.tasks||[],meds:state.meds||[],modules:state.modules||[],courses:state.courses||[],gpa:state.gpa||{},config};
+
+  return(
+    <div style={{fontFamily:"-apple-system,BlinkMacSystemFont,'Inter',system-ui,sans-serif",background:T.bg,minHeight:"100vh",maxWidth:700,margin:"0 auto"}}>
+      <div style={{background:T.card,borderBottom:`1px solid ${T.bd}`,padding:"12px 18px",display:"flex",alignItems:"center",gap:12,position:"sticky",top:0,zIndex:10}}>
+        <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${T.p},${T.dk})`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:19}}>{config.emoji||"🩺"}</div>
+        <div style={{flex:1}}>
+          <div style={{fontFamily:"Georgia,serif",fontSize:17,fontWeight:700,color:T.ink,lineHeight:1}}>{config.name?`Nurse ${config.name}'s NursePad`:"NursePad"}</div>
+          <div style={{fontSize:9,color:T.soft,letterSpacing:"0.08em",marginTop:1}}>{config.school||"NURSING STUDENT"} · {config.program||"NURSING"}</div>
+        </div>
+      </div>
+      <div style={{padding:"18px 14px 110px"}}>
+        {tab==="home"     &&<HomeView state={fullState} onNavigate={setTab}/>}
+        {tab==="grades"   &&<GradesView courses={state.courses||[]} setCourses={setCourses} gpa={state.gpa||{}} setGpa={setGpa} pass={config.passingGrade||77}/>}
+        {tab==="tasks"    &&<TasksView tasks={state.tasks||[]} setTasks={set("tasks")}/>}
+        {tab==="meds"     &&<DrugView meds={state.meds||[]} setMeds={set("meds")}/>}
+        {tab==="modules"  &&<ModulesView modules={state.modules||[]} setModules={set("modules")}/>}
+        {tab==="vitals"   &&<VitalsView/>}
+        {tab==="settings" &&<SettingsView config={config} setConfig={setConfig} themeId={config.themeId||"pink"} setThemeId={setThemeId}/>}
+      </div>
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:700,background:T.card,borderTop:`1px solid ${T.bd}`,display:"flex"}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{background:"none",border:"none",cursor:"pointer",padding:"8px 0 12px",display:"flex",flexDirection:"column",alignItems:"center",gap:2,flex:1}}>
+            <span style={{fontSize:18}}>{t.icon}</span>
+            <span style={{fontSize:8,fontWeight:700,letterSpacing:"0.05em",textTransform:"uppercase",color:tab===t.id?T.p:T.soft,lineHeight:1}}>{t.label}</span>
+            {tab===t.id&&<span style={{width:20,height:3,borderRadius:99,background:T.p}}/>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+  </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"5070e21320304a1ba2b0a42ce9682840","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
