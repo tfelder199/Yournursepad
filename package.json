@@ -1,0 +1,14 @@
+{
+  "name": "nursepad",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "vercel-build": "node build.js"
+  },
+  "devDependencies": {
+    "@babel/core": "7.23.0",
+    "@babel/preset-react": "7.22.15",
+    "@babel/preset-env": "7.23.0"
+  }
+}
