@@ -3,7 +3,9 @@ const babel = require('@babel/core');
 
 console.log('Building NursePad...');
 
-const src = fs.readFileSync('./nursepad_source.js', 'utf8');
+const raw = fs.readFileSync('./index.html', 'utf8');
+const src = raw.split('<script type="text/babel" data-presets="react,env">')[1].split('const root = ReactDOM')[0].trim();
+
 
 const result = babel.transformSync(src, {
   presets: [
